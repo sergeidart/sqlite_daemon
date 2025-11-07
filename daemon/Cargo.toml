@@ -1,0 +1,31 @@
+[package]
+name = "skylinedb-daemon"
+version = "1.0.0"
+edition = "2021"
+
+[[example]]
+name = "read_example"
+path = "../examples/read_example.rs"
+
+[dependencies]
+tokio = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+time = { workspace = true }
+interprocess = { version = "2.2", features = ["tokio"] }
+bytes = "1.7"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Security",
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

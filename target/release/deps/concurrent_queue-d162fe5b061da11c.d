@@ -1,0 +1,11 @@
+D:\Projects\sqlite_daemon\target\release\deps\concurrent_queue-d162fe5b061da11c.d: C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\lib.rs C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\bounded.rs C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\single.rs C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\unbounded.rs C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\sync.rs
+
+D:\Projects\sqlite_daemon\target\release\deps\libconcurrent_queue-d162fe5b061da11c.rlib: C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\lib.rs C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\bounded.rs C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\single.rs C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\unbounded.rs C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\sync.rs
+
+D:\Projects\sqlite_daemon\target\release\deps\libconcurrent_queue-d162fe5b061da11c.rmeta: C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\lib.rs C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\bounded.rs C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\single.rs C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\unbounded.rs C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\sync.rs
+
+C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\lib.rs:
+C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\bounded.rs:
+C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\single.rs:
+C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\unbounded.rs:
+C:\Users\Serge\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\sync.rs:
