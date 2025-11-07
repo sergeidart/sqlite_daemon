@@ -40,7 +40,8 @@ async fn main() -> Result<()> {
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            let mut path = std::env::current_dir().unwrap();
+            let mut path = std::env::current_dir()
+                .expect("Failed to get current directory - please run from a valid directory or specify database path as argument");
             path.push("data.db");
             path
         });

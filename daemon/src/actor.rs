@@ -21,7 +21,8 @@ pub async fn actor_loop(mut rx: mpsc::Receiver<ActorCommand>, pool: SqlitePool, 
     info!("Write actor started");
 
     loop {
-        let timeout_at = last_activity + IDLE_TIMEOUT;
+        // Calculate time until idle timeout
+        let time_until_timeout = IDLE_TIMEOUT.saturating_sub(last_activity.elapsed());
 
         tokio::select! {
             biased;
@@ -29,9 +30,12 @@ pub async fn actor_loop(mut rx: mpsc::Receiver<ActorCommand>, pool: SqlitePool, 
             maybe_cmd = rx.recv() => {
                 match maybe_cmd {
                     Some(ActorCommand::Request { req, reply }) => {
+                        // Reset timeout on ANY incoming message
+                        last_activity = Instant::now();
+                        
+                        // Process the request
                         let resp = handle_request(req, &pool, &db_path).await;
                         let _ = reply.send(resp);
-                        last_activity = Instant::now();
                     }
                     None => {
                         info!("Command channel closed, shutting down");
@@ -40,10 +44,19 @@ pub async fn actor_loop(mut rx: mpsc::Receiver<ActorCommand>, pool: SqlitePool, 
                 }
             }
 
-            _ = tokio::time::sleep_until(timeout_at.into()) => {
-                if rx.is_empty() {
-                    info!("Idle timeout reached, shutting down daemon");
+            _ = tokio::time::sleep(time_until_timeout) => {
+                // Timeout fired - double check if we're truly idle
+                // (in case a message arrived just as timeout fired)
+                if rx.is_empty() && last_activity.elapsed() >= IDLE_TIMEOUT {
+                    info!(
+                        idle_duration_secs = last_activity.elapsed().as_secs(),
+                        "Idle timeout reached, shutting down daemon"
+                    );
                     break;
+                } else {
+                    // False alarm - message arrived or clock skew, continue loop
+                    // The next iteration will recalculate the timeout
+                    debug!("Idle timeout fired but activity detected, continuing");
                 }
             }
         }

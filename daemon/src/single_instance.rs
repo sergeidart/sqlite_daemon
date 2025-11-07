@@ -44,6 +44,13 @@ impl SingleInstanceGuard {
             .encode_utf16()
             .collect::<Vec<u16>>();
         
+        // SAFETY: 
+        // - mutex_name is a valid null-terminated UTF-16 string created above
+        // - HANDLE is properly managed via Drop implementation (CloseHandle called on drop)
+        // - Windows API calls are inherently unsafe but correct usage is guaranteed by:
+        //   1. Valid mutex name pointer from Vec<u16>
+        //   2. Proper error checking via Result
+        //   3. RAII pattern ensures cleanup even on panic
         unsafe {
             let mutex = CreateMutexW(
                 None,
@@ -84,6 +91,12 @@ impl SingleInstanceGuard {
         
         // Try to acquire exclusive lock (non-blocking)
         let fd = lock_file.as_raw_fd();
+        // SAFETY:
+        // - fd is a valid file descriptor obtained from lock_file via AsRawFd
+        // - flock is a standard POSIX system call that only reads the fd value
+        // - LOCK_EX | LOCK_NB are valid flag combinations for flock
+        // - File handle remains valid for the duration of this call
+        // - Lock is automatically released when file descriptor is closed (RAII via Drop)
         let result = unsafe {
             libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB)
         };
@@ -115,6 +128,10 @@ impl Drop for SingleInstanceGuard {
     fn drop(&mut self) {
         #[cfg(windows)]
         {
+            // SAFETY: 
+            // - self._mutex is a valid HANDLE that we own (created in try_acquire_windows)
+            // - CloseHandle is safe to call once on a valid handle
+            // - This is the only place where we close this handle (no double-free)
             unsafe {
                 let _ = CloseHandle(self._mutex);
             }

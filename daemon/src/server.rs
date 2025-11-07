@@ -2,7 +2,6 @@ use crate::actor::ActorCommand;
 use crate::protocol::{Request, Response};
 use anyhow::Result;
 use bytes::{Buf, BytesMut};
-use interprocess::local_socket::{GenericNamespaced, ListenerOptions, ToNsName};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{ServerOptions, NamedPipeServer};
 use tokio::sync::{mpsc, oneshot};
