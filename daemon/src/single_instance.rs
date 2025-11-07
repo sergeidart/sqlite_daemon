@@ -15,6 +15,7 @@ use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
+#[derive(Debug)]
 pub struct SingleInstanceGuard {
     #[cfg(windows)]
     _mutex: HANDLE,
