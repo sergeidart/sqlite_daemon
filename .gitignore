@@ -1,0 +1,62 @@
+# Rust build artifacts
+/target/
+**/target/
+
+# Cargo.lock for libraries (keep for binaries)
+# Cargo.lock
+
+# Build outputs
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+
+# Debug symbols
+*.pdb
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Database files (don't commit test databases)
+*.db
+*.db-shm
+*.db-wal
+data.db*
+
+# Logs
+*.log
+
+# OS files
+Thumbs.db
+desktop.ini
+
+# Backup files
+*.bak
+*.tmp
+*.temp
+
+# Lock files (Unix single-instance)
+/var/run/skylinedb-*.lock
+*.lock
+!Cargo.lock
+
+# Documentation build artifacts
+/docs/_build/
+/docs/.doctrees/
+
+# Test coverage
+*.profraw
+*.profdata
+/coverage/
+
+# Flamegraph outputs
+flamegraph.svg
+perf.data
+perf.data.old
