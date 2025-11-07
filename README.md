@@ -545,10 +545,6 @@ sqlite_daemon/
 
 MIT
 
-## Author
-
-Built in ~1 hour with AI assistance 😎
-
 ---
 
 **Questions?** Check `ARCHITECTURE.md` for the full design or dive into the source code!
