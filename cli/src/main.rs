@@ -20,13 +20,41 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Check daemon status
-    Ping,
+    Ping {
+        /// Database name (e.g., "galaxy.db")
+        #[arg(long, default_value = "data.db")]
+        db: String,
+    },
     
     /// Execute SQL statements
     Exec {
+        /// Database name (e.g., "galaxy.db")
+        #[arg(long, default_value = "data.db")]
+        db: String,
         /// SQL statements (can be multiple)
         #[arg(required = true)]
         sql: Vec<String>,
+    },
+    
+    /// Prepare database for maintenance (checkpoint WAL)
+    PrepareForMaintenance {
+        /// Database name (e.g., "galaxy.db")
+        #[arg(long, default_value = "data.db")]
+        db: String,
+    },
+    
+    /// Close database for file replacement
+    CloseDatabase {
+        /// Database name (e.g., "galaxy.db")
+        #[arg(long, default_value = "data.db")]
+        db: String,
+    },
+    
+    /// Reopen database after file replacement
+    ReopenDatabase {
+        /// Database name (e.g., "galaxy.db")
+        #[arg(long, default_value = "data.db")]
+        db: String,
     },
     
     /// Shutdown daemon gracefully
@@ -37,11 +65,23 @@ enum Commands {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 enum Request {
-    Ping,
+    Ping {
+        db: String,
+    },
     ExecBatch {
+        db: String,
         stmts: Vec<Statement>,
         #[serde(default = "default_tx_mode")]
         tx: String,
+    },
+    PrepareForMaintenance {
+        db: String,
+    },
+    CloseDatabase {
+        db: String,
+    },
+    ReopenDatabase {
+        db: String,
     },
     Shutdown,
 }
@@ -79,6 +119,16 @@ enum ResponseData {
         rev: i64,
         rows_affected: u64,
     },
+    PrepareForMaintenance {
+        checkpointed: bool,
+    },
+    CloseDatabase {
+        closed: bool,
+    },
+    ReopenDatabase {
+        reopened: bool,
+        rev: i64,
+    },
 }
 
 #[tokio::main]
@@ -86,15 +136,16 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Ping => {
-            let response = send_request(Request::Ping).await?;
+        Commands::Ping { db } => {
+            let response = send_request(Request::Ping { db: db.clone() }).await?;
             match response {
                 Response::Ok {
                     data: ResponseData::Ping { version, db_path, rev },
                 } => {
                     println!("✓ Daemon is running");
+                    println!("  Database: {}", db);
                     println!("  Version: {}", version);
-                    println!("  Database: {}", db_path);
+                    println!("  Path: {}", db_path);
                     println!("  Revision: {}", rev);
                 }
                 Response::Error { message } => {
@@ -108,13 +159,14 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::Exec { sql } => {
+        Commands::Exec { db, sql } => {
             let stmts = sql.into_iter().map(|s| Statement {
                 sql: s,
                 params: vec![],
             }).collect();
 
             let request = Request::ExecBatch {
+                db: db.clone(),
                 stmts,
                 tx: "atomic".to_string(),
             };
@@ -124,9 +176,71 @@ async fn main() -> Result<()> {
                 Response::Ok {
                     data: ResponseData::ExecBatch { rev, rows_affected },
                 } => {
-                    println!("✓ Executed successfully");
+                    println!("✓ Executed successfully on database: {}", db);
                     println!("  Rows affected: {}", rows_affected);
                     println!("  New revision: {}", rev);
+                }
+                Response::Error { message } => {
+                    eprintln!("✗ Error: {}", message);
+                    std::process::exit(1);
+                }
+                _ => {
+                    eprintln!("✗ Unexpected response");
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        Commands::PrepareForMaintenance { db } => {
+            let response = send_request(Request::PrepareForMaintenance { db: db.clone() }).await?;
+            match response {
+                Response::Ok {
+                    data: ResponseData::PrepareForMaintenance { checkpointed },
+                } => {
+                    println!("✓ Database prepared for maintenance: {}", db);
+                    println!("  WAL checkpointed: {}", checkpointed);
+                }
+                Response::Error { message } => {
+                    eprintln!("✗ Error: {}", message);
+                    std::process::exit(1);
+                }
+                _ => {
+                    eprintln!("✗ Unexpected response");
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        Commands::CloseDatabase { db } => {
+            let response = send_request(Request::CloseDatabase { db: db.clone() }).await?;
+            match response {
+                Response::Ok {
+                    data: ResponseData::CloseDatabase { closed },
+                } => {
+                    println!("✓ Database closed: {}", db);
+                    println!("  Closed: {}", closed);
+                    println!("  File locks released - safe to replace files");
+                }
+                Response::Error { message } => {
+                    eprintln!("✗ Error: {}", message);
+                    std::process::exit(1);
+                }
+                _ => {
+                    eprintln!("✗ Unexpected response");
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        Commands::ReopenDatabase { db } => {
+            let response = send_request(Request::ReopenDatabase { db: db.clone() }).await?;
+            match response {
+                Response::Ok {
+                    data: ResponseData::ReopenDatabase { reopened, rev },
+                } => {
+                    println!("✓ Database reopened: {}", db);
+                    println!("  Reopened: {}", reopened);
+                    println!("  Current revision: {}", rev);
                 }
                 Response::Error { message } => {
                     eprintln!("✗ Error: {}", message);

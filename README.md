@@ -1,13 +1,15 @@
 # SQLite Daemon
 
-**A lightweight daemon for safe concurrent SQLite access across multiple processes.**
+**A lightweight two-tier daemon for safe concurrent SQLite access across multiple processes and databases.**
 
 ## What is this?
 
 A local database daemon that:
 - ✅ **Serializes all writes** through a single process (no `SQLITE_BUSY` errors)
+- ✅ **Multi-database support** - One daemon manages multiple databases independently
+- ✅ **Database maintenance** - Safe file replacement for sync operations
 - ✅ **Allows direct read-only access** for low-latency reads  
-- ✅ **Auto-starts** when needed and **idles out** after 15 minutes
+- ✅ **Auto-starts** when needed with smart lifecycle management
 - ✅ **Uses SQLite WAL mode** for concurrent readers
 - ✅ **Simple JSON protocol** over Windows Named Pipes (or Unix sockets)
 
@@ -16,15 +18,17 @@ A local database daemon that:
 ### 1. Start the daemon
 
 ```powershell
-# Recommended: Specify absolute database path
-.\target\release\skylinedb-daemon.exe D:\MyApp\data\app.db
-
-# Or relative path (from daemon's working directory)
-.\target\release\skylinedb-daemon.exe .\database\app.db
-
-# Or use default (creates data.db in daemon's current directory)
+# Start the daemon (it manages all databases in the specified directory)
 .\target\release\skylinedb-daemon.exe
+
+# Or specify a custom database directory
+.\target\release\skylinedb-daemon.exe D:\MyApp\data
 ```
+
+**Architecture:**
+- **Router Daemon**: Main process that accepts client connections (30-minute idle timeout)
+- **Worker Daemons**: One per database file, spawned on-demand (5-minute idle timeout)
+- **Multi-DB Support**: Access multiple databases through a single daemon instance
 
 **Single Instance Protection:**
 ```powershell
@@ -37,7 +41,7 @@ PS> .\skylinedb-daemon.exe
 ✗ Error: Another daemon instance is already running!
 
 # Check if running
-PS> .\skylinedb-cli.exe ping
+PS> .\skylinedb-cli.exe ping --db data.db
 ✓ Daemon is running
 
 # Stop daemon
@@ -46,49 +50,43 @@ PS> .\skylinedb-cli.exe shutdown
 ```
 
 **What happens:**
-- ✅ Database created at specified path (not in daemon's folder)
-- ✅ WAL files created alongside: `app.db-wal`, `app.db-shm`
-- ✅ Directory is created if it doesn't exist
-- ✅ No unwanted `data.db` in random locations
+- ✅ Router daemon starts and listens on `\\.\pipe\SkylineDBd-v1`
+- ✅ Worker daemons spawned on-demand for each database
+- ✅ Each database gets independent WAL files: `db.db-wal`, `db.db-shm`
+- ✅ Workers auto-shutdown after 5 minutes of inactivity
+- ✅ Router stays alive longer (30 minutes) to quickly spawn workers
 
-The daemon will:
-- Initialize SQLite with WAL mode (crash-safe journaling)
-- Listen on `\\.\pipe\SkylineDBd-v1` (Windows) or `/tmp/skylinedb-v1.sock` (Unix)
-- **Run in the background** accepting multiple connections
-- **Auto-shutdown after 15 minutes** of inactivity (no requests)
-- Can be restarted automatically when needed
+### 2. Work with databases
 
-**Important:** 
-- The daemon is a **persistent background process**, not a one-shot command!
-- **Single instance protection** - Only one daemon can run at a time
-  - If daemon is already running, second instance exits with clear error
-  - Use `skylinedb-cli.exe ping` to check if daemon is running
-  - Use `skylinedb-cli.exe shutdown` to stop existing daemon
-- **One daemon per database** (for multiple DBs, see `SINGLE_INSTANCE.md` for future enhancements)
-
-### 2. Write data (via daemon)
-
-**Single statement:**
+**Multiple databases through one daemon:**
 ```powershell
-.\target\release\skylinedb-cli.exe exec "INSERT INTO tasks (title) VALUES ('Hello')"
+# Work with different databases
+.\target\release\skylinedb-cli.exe exec --db galaxy.db "CREATE TABLE stars (id INTEGER, name TEXT)"
+.\target\release\skylinedb-cli.exe exec --db users.db "CREATE TABLE users (id INTEGER, name TEXT)"
+.\target\release\skylinedb-cli.exe exec --db settings.db "CREATE TABLE config (key TEXT, value TEXT)"
+
+# Each database operates independently
+.\target\release\skylinedb-cli.exe ping --db galaxy.db
+.\target\release\skylinedb-cli.exe ping --db users.db
 ```
 
-**Batch operations (recommended for performance):**
-```powershell
-# Multiple inserts in one transaction
-.\target\release\skylinedb-cli.exe exec \
-  "INSERT INTO tasks (title, status) VALUES ('Task 1', 'pending')" \
-  "INSERT INTO tasks (title, status) VALUES ('Task 2', 'done')" \
-  "UPDATE meta SET last_sync = 12345"
-```
+**Write data (via daemon):**
 
-**Complex operations:**
 ```powershell
-# Deletions, updates, inserts - all atomic
-.\target\release\skylinedb-cli.exe exec \
-  "DELETE FROM tasks WHERE status = 'archived'" \
-  "UPDATE tasks SET status = 'done' WHERE due_date < datetime('now')" \
-  "INSERT INTO audit_log (action, timestamp) VALUES ('cleanup', datetime('now'))"
+# Single statement
+.\target\release\skylinedb-cli.exe exec --db galaxy.db "INSERT INTO stars (name) VALUES ('Sirius')"
+
+# Batch operations (recommended for performance)
+.\target\release\skylinedb-cli.exe exec --db galaxy.db \
+  "INSERT INTO stars (name) VALUES ('Betelgeuse')" \
+  "INSERT INTO stars (name) VALUES ('Rigel')" \
+  "UPDATE meta SET last_sync = datetime('now')"
+
+# Complex operations - all atomic
+.\target\release\skylinedb-cli.exe exec --db galaxy.db \
+  "DELETE FROM stars WHERE brightness < 0.5" \
+  "UPDATE stars SET catalog_id = id WHERE catalog_id IS NULL" \
+  "INSERT INTO audit_log (action) VALUES ('cleanup')"
 ```
 
 All statements in one `exec` call are executed in a **single atomic transaction**.
@@ -101,36 +99,89 @@ All writes **must** go through the daemon to ensure serialization.
 use sqlx::SqlitePool;
 
 // Open read-only connection (no daemon needed!)
-let pool = SqlitePool::connect("sqlite:data.db?mode=ro").await?;
+let pool = SqlitePool::connect("sqlite:galaxy.db?mode=ro").await?;
 
 // Query directly
-let tasks = sqlx::query!("SELECT * FROM tasks")
+let stars = sqlx::query!("SELECT * FROM stars")
     .fetch_all(&pool)
     .await?;
 ```
 
 Reads bypass the daemon for **maximum performance**.
 
-## Architecture
+### 4. Database Maintenance & File Replacement
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                      Your Apps                          │
-│                                                         │
-│  Writes ──────────> Daemon ──────────> SQLite          │
-│                       ↓                    ↑            │
-│                  Serializes             WAL mode        │
-│                                            ↑            │
-│  Reads ──────────────────────────────────┘             │
-│               (Direct, no IPC overhead)                │
-└─────────────────────────────────────────────────────────┘
+**For Google Drive sync and database file replacement:**
+
+```powershell
+# Step 1: Prepare database for maintenance (checkpoint WAL)
+.\target\release\skylinedb-cli.exe prepare-for-maintenance --db galaxy.db
+# ✓ WAL checkpointed - all data flushed to main .db file
+# ✓ Now you can calculate hash of galaxy.db
+
+# Step 2: Close database (releases file locks)
+.\target\release\skylinedb-cli.exe close-database --db galaxy.db
+# ✓ File locks released - safe to replace galaxy.db file
+
+# Step 3: Replace the database file
+# (Your sync service downloads and replaces galaxy.db here)
+Copy-Item -Force galaxy-new.db galaxy.db
+
+# Step 4: Reopen database (resume operations)
+.\target\release\skylinedb-cli.exe reopen-database --db galaxy.db
+# ✓ Database reopened - operations resume
+
+# Meanwhile, other databases continue working!
+.\target\release\skylinedb-cli.exe exec --db users.db "INSERT INTO users (name) VALUES ('Alice')"
+# ✓ Works! Other databases unaffected by maintenance
 ```
 
 **Key Points:**
-- One daemon process owns the SQLite file in **write mode**
-- Apps open SQLite in **read-only mode** for direct queries
-- Daemon serializes all writes through an actor pattern
-- WAL mode allows concurrent readers
+- ✅ `prepare-for-maintenance` checkpoints WAL → only `.db` file needs syncing
+- ✅ `close-database` releases all file locks → safe for file replacement
+- ✅ `reopen-database` reopens the new file → operations resume
+- ✅ **Other databases keep working** during maintenance
+- ✅ Operations on closed DB get clear error: "Database is closed for maintenance"
+
+See `MAINTENANCE_GUIDE.md` for detailed integration instructions.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                          Your Apps                               │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+                ┌────────────────────────────┐
+                │   Router Daemon            │
+                │   (Main Entry Point)       │
+                │                            │
+                │  • Routes by database      │
+                │  • Spawns workers          │
+                │  • 30-min idle timeout     │
+                └────────────┬───────────────┘
+                             │
+        ┌────────────────────┼────────────────────┐
+        │                    │                    │
+        ▼                    ▼                    ▼
+┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+│ Worker:       │    │ Worker:       │    │ Worker:       │
+│ galaxy.db     │    │ users.db      │    │ settings.db   │
+│               │    │               │    │               │
+│ • WAL mode    │    │ • Independent │    │ • Per-DB      │
+│ • Serialized  │    │   maintenance │    │   state       │
+│   writes      │    │   state       │    │ • 5-min idle  │
+│ • Direct reads│    │               │    │   timeout     │
+└───────────────┘    └───────────────┘    └───────────────┘
+```
+
+**Key Points:**
+- **Router daemon** accepts all client connections
+- **Worker daemons** spawned per database on first access
+- Each worker serializes writes for its database
+- Apps can read directly from `.db` files (WAL mode)
+- Closing one database doesn't affect others
 
 ## Protocol
 
@@ -140,15 +191,52 @@ Reads bypass the daemon for **maximum performance**.
 ```json
 {
   "type": "ExecBatch",
+  "db": "galaxy.db",
   "stmts": [
     {
-      "sql": "INSERT INTO tasks (title, status) VALUES (?, ?)",
-      "params": ["Buy milk", "pending"]
+      "sql": "INSERT INTO stars (name, magnitude) VALUES (?, ?)",
+      "params": ["Sirius", -1.46]
     }
   ],
   "tx": "atomic"
 }
 ```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "rev": 43,
+  "rows_affected": 1
+}
+```
+
+**Maintenance Commands:**
+
+```json
+// Prepare for maintenance
+{
+  "type": "PrepareForMaintenance",
+  "db": "galaxy.db"
+}
+// Response: { "status": "ok", "checkpointed": true }
+
+// Close database
+{
+  "type": "CloseDatabase",
+  "db": "galaxy.db"
+}
+// Response: { "status": "ok", "closed": true }
+
+// Reopen database
+{
+  "type": "ReopenDatabase",
+  "db": "galaxy.db"
+}
+// Response: { "status": "ok", "reopened": true, "rev": 43 }
+```
+
+See `daemon/src/protocol.rs` for full types.
 
 **Response:**
 ```json
@@ -175,19 +263,56 @@ See `daemon/src/protocol.rs` for full types.
 ```
 
 ### Shutdown daemon
+
+**Using CLI (recommended):**
 ```powershell
+# Graceful shutdown - closes all databases and stops daemon
 .\target\release\skylinedb-cli.exe shutdown
 ```
+
+**Forceful shutdown (if needed):**
+```powershell
+# Find and kill the daemon process
+Stop-Process -Name skylinedb-daemon -Force
+
+# Or use Task Manager to end "skylinedb-daemon.exe"
+```
+
+**What happens during shutdown:**
+- ✅ All active database workers are notified
+- ✅ In-flight operations complete gracefully
+- ✅ All database connections close properly
+- ✅ WAL files are checkpointed
+- ✅ File locks are released
+- ✅ Named pipe is closed
+
+**When to restart:**
+- After forceful shutdown (to ensure clean state)
+- After updating daemon binary
+- When troubleshooting connection issues
+
+**Note:** The daemon auto-restarts on next client request if using a service manager, or you can start it manually again.
 
 ## Building
 
 ```powershell
+# Build release binaries
 cargo build --release
 ```
 
-Produces:
+**Produces:**
 - `target/release/skylinedb-daemon.exe` - The daemon  
 - `target/release/skylinedb-cli.exe` - CLI tool
+
+**If build fails with "Access is denied":**
+```powershell
+# The daemon is running and holding the .exe file
+# Stop it first:
+.\target\release\skylinedb-cli.exe shutdown
+
+# Then rebuild:
+cargo build --release
+```
 
 ## How Apps Should Connect
 

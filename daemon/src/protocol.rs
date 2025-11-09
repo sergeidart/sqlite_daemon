@@ -5,15 +5,38 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type")]
 pub enum Request {
     /// Health check
-    Ping,
+    Ping {
+        /// Database identifier (file name)
+        db: String,
+    },
     
     /// Execute a batch of write statements
     ExecBatch {
+        /// Database identifier (file name)
+        db: String,
         /// SQL statements with parameters
         stmts: Vec<Statement>,
         /// Transaction mode: "atomic" or "none"
         #[serde(default = "default_tx_mode")]
         tx: TransactionMode,
+    },
+    
+    /// Prepare database for maintenance (checkpoint WAL)
+    PrepareForMaintenance {
+        /// Database identifier (file name)
+        db: String,
+    },
+    
+    /// Close database connection (for file replacement)
+    CloseDatabase {
+        /// Database identifier (file name)
+        db: String,
+    },
+    
+    /// Reopen database connection (after file replacement)
+    ReopenDatabase {
+        /// Database identifier (file name)
+        db: String,
     },
     
     /// Graceful shutdown (for testing)
@@ -73,6 +96,16 @@ pub enum ResponseData {
         rev: i64,
         rows_affected: u64,
     },
+    PrepareForMaintenance {
+        checkpointed: bool,
+    },
+    CloseDatabase {
+        closed: bool,
+    },
+    ReopenDatabase {
+        reopened: bool,
+        rev: i64,
+    },
     Shutdown,
 }
 
@@ -96,6 +129,31 @@ impl Response {
     pub fn ok_shutdown() -> Self {
         Response::Ok {
             data: ResponseData::Shutdown,
+        }
+    }
+
+    pub fn ok_prepare_maintenance() -> Self {
+        Response::Ok {
+            data: ResponseData::PrepareForMaintenance {
+                checkpointed: true,
+            },
+        }
+    }
+
+    pub fn ok_close_database() -> Self {
+        Response::Ok {
+            data: ResponseData::CloseDatabase {
+                closed: true,
+            },
+        }
+    }
+
+    pub fn ok_reopen_database(rev: i64) -> Self {
+        Response::Ok {
+            data: ResponseData::ReopenDatabase {
+                reopened: true,
+                rev,
+            },
         }
     }
 

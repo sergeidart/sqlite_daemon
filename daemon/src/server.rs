@@ -1,17 +1,19 @@
-use crate::actor::ActorCommand;
+use crate::router::Router;
 use crate::protocol::{Request, Response};
 use anyhow::Result;
 use bytes::{Buf, BytesMut};
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{ServerOptions, NamedPipeServer};
-use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
 #[cfg(windows)]
-pub async fn run_server(pipe_name: &str, actor_tx: mpsc::Sender<ActorCommand>) -> Result<()> {
+pub async fn run_server(pipe_name: &str, router: Router) -> Result<()> {
     info!(pipe_name = %pipe_name, "IPC server listening");
+
+    let router = Arc::new(router);
 
     loop {
         // Create a new pipe instance for each connection
@@ -25,9 +27,9 @@ pub async fn run_server(pipe_name: &str, actor_tx: mpsc::Sender<ActorCommand>) -
         debug!("Client connected");
         
         // Handle this connection in a separate task
-        let actor_tx = actor_tx.clone();
+        let router = Arc::clone(&router);
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(server, actor_tx).await {
+            if let Err(e) = handle_connection(server, router).await {
                 debug!(error = %e, "Connection handler error");
             }
         });
@@ -35,7 +37,7 @@ pub async fn run_server(pipe_name: &str, actor_tx: mpsc::Sender<ActorCommand>) -
 }
 
 #[cfg(unix)]
-pub async fn run_server(pipe_name: &str, actor_tx: mpsc::Sender<ActorCommand>) -> Result<()> {
+pub async fn run_server(pipe_name: &str, router: Router) -> Result<()> {
     use tokio::net::UnixListener;
     
     // Remove existing socket if any
@@ -44,12 +46,14 @@ pub async fn run_server(pipe_name: &str, actor_tx: mpsc::Sender<ActorCommand>) -
     let listener = UnixListener::bind(pipe_name)?;
     info!(pipe_name = %pipe_name, "IPC server listening");
 
+    let router = Arc::new(router);
+
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
-                let actor_tx = actor_tx.clone();
+                let router = Arc::clone(&router);
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection_unix(stream, actor_tx).await {
+                    if let Err(e) = handle_connection_unix(stream, router).await {
                         debug!(error = %e, "Connection handler error");
                     }
                 });
@@ -64,7 +68,7 @@ pub async fn run_server(pipe_name: &str, actor_tx: mpsc::Sender<ActorCommand>) -
 #[cfg(windows)]
 async fn handle_connection(
     mut stream: NamedPipeServer,
-    actor_tx: mpsc::Sender<ActorCommand>,
+    router: Arc<Router>,
 ) -> Result<()> {
     debug!("Client connected");
 
@@ -122,28 +126,8 @@ async fn handle_connection(
         // Check if this is a shutdown request
         let is_shutdown = matches!(request, Request::Shutdown);
 
-        // Send to actor
-        let (reply_tx, reply_rx) = oneshot::channel();
-        let cmd = ActorCommand::Request {
-            req: request,
-            reply: reply_tx,
-        };
-
-        if actor_tx.send(cmd).await.is_err() {
-            error!("Actor channel closed");
-            let response = Response::error("Daemon is shutting down");
-            write_response(&mut stream, &response).await?;
-            return Ok(());
-        }
-
-        // Wait for response
-        let response = match reply_rx.await {
-            Ok(resp) => resp,
-            Err(_) => {
-                error!("Actor reply channel closed");
-                Response::error("Internal error")
-            }
-        };
+        // Route request to appropriate worker
+        let response = router.route_request(request).await;
 
         // Send response
         write_response(&mut stream, &response).await?;
@@ -159,7 +143,7 @@ async fn handle_connection(
 #[cfg(unix)]
 async fn handle_connection_unix(
     mut stream: tokio::net::UnixStream,
-    actor_tx: mpsc::Sender<ActorCommand>,
+    router: Arc<Router>,
 ) -> Result<()> {
     debug!("Client connected");
 
@@ -217,28 +201,8 @@ async fn handle_connection_unix(
         // Check if this is a shutdown request
         let is_shutdown = matches!(request, Request::Shutdown);
 
-        // Send to actor
-        let (reply_tx, reply_rx) = oneshot::channel();
-        let cmd = ActorCommand::Request {
-            req: request,
-            reply: reply_tx,
-        };
-
-        if actor_tx.send(cmd).await.is_err() {
-            error!("Actor channel closed");
-            let response = Response::error("Daemon is shutting down");
-            write_response_unix(&mut stream, &response).await?;
-            return Ok(());
-        }
-
-        // Wait for response
-        let response = match reply_rx.await {
-            Ok(resp) => resp,
-            Err(_) => {
-                error!("Actor reply channel closed");
-                Response::error("Internal error")
-            }
-        };
+        // Route request to appropriate worker
+        let response = router.route_request(request).await;
 
         // Send response
         write_response_unix(&mut stream, &response).await?;

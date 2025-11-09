@@ -1,13 +1,13 @@
-mod actor;
-mod db;
 mod protocol;
 mod server;
 mod single_instance;
+mod worker;
+mod router;
 
 use anyhow::{Context, Result};
+use router::Router;
 use single_instance::SingleInstanceGuard;
 use std::path::PathBuf;
-use tokio::sync::mpsc;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -35,41 +35,26 @@ async fn main() -> Result<()> {
     let _instance_guard = SingleInstanceGuard::try_acquire()
         .context("Failed to acquire single-instance lock")?;
 
-    // Get database path from args or use default
-    let db_path = std::env::args()
+    // Get database directory from args or use default
+    let db_dir = std::env::args()
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            let mut path = std::env::current_dir()
-                .expect("Failed to get current directory - please run from a valid directory or specify database path as argument");
-            path.push("data.db");
-            path
+            std::env::current_dir()
+                .expect("Failed to get current directory")
         });
 
-    info!(db_path = %db_path.display(), "Database path");
+    info!(db_dir = %db_dir.display(), "Database directory");
 
-    // Initialize database
-    let pool = db::init_db(&db_path)
-        .await
-        .context("Failed to initialize database")?;
+    // Create router
+    let router = Router::new(db_dir);
 
-    // Create actor channel
-    let (actor_tx, actor_rx) = mpsc::channel(1000);
-
-    // Spawn write actor
-    let db_path_str = db_path.display().to_string();
-    let actor_handle = tokio::spawn(actor::actor_loop(actor_rx, pool, db_path_str));
-
-    // Run IPC server
-    let server_result = server::run_server(PIPE_NAME, actor_tx).await;
+    // Run IPC server with router
+    let server_result = server::run_server(PIPE_NAME, router).await;
 
     if let Err(e) = server_result {
         error!(error = %e, "Server error");
     }
-
-    // Wait for actor to finish
-    info!("Waiting for actor to finish...");
-    let _ = actor_handle.await;
 
     info!("Daemon shutdown complete");
 
