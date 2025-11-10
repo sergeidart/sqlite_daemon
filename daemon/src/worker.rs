@@ -8,27 +8,23 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 const WORKER_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60); // 5 minutes
-
 pub enum WorkerCommand {
     Request {
         req: Request,
         reply: oneshot::Sender<Response>,
     },
 }
-
 enum DatabaseState {
     Open(SqlitePool),
     Preparing,  // Checkpointing in progress
     Closed,     // File replacement allowed
 }
-
 struct WorkerState {
     db_state: DatabaseState,
     db_path: PathBuf,
     db_name: String,
     last_activity: Instant,
 }
-
 pub async fn worker_loop(
     mut rx: mpsc::Receiver<WorkerCommand>,
     db_path: PathBuf,
@@ -40,7 +36,6 @@ pub async fn worker_loop(
         db_name: db_name.clone(),
         last_activity: Instant::now(),
     };
-
     match init_database(&db_path).await {
         Ok(pool) => {
             state.db_state = DatabaseState::Open(pool);
@@ -51,13 +46,10 @@ pub async fn worker_loop(
             return;
         }
     }
-
     loop {
         let time_until_timeout = WORKER_IDLE_TIMEOUT.saturating_sub(state.last_activity.elapsed());
-
         tokio::select! {
             biased;
-
             maybe_cmd = rx.recv() => {
                 match maybe_cmd {
                     Some(WorkerCommand::Request { req, reply }) => {
@@ -87,20 +79,16 @@ pub async fn worker_loop(
 
     info!(db = %db_name, "Worker stopped");
 }
-
 async fn init_database(db_path: &PathBuf) -> Result<SqlitePool> {
     let db_url = format!("sqlite:{}", db_path.display());
-    
     let options = SqliteConnectOptions::from_str(&db_url)?
         .create_if_missing(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
         .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
         .busy_timeout(std::time::Duration::from_secs(5));
-
     let pool = SqlitePool::connect_with(options)
         .await
         .context("Failed to connect to database")?;
-
     sqlx::query("PRAGMA wal_autocheckpoint=1000")
         .execute(&pool)
         .await?;
@@ -345,6 +333,11 @@ async fn execute_atomic_batch(stmts: Vec<Statement>, pool: &SqlitePool) -> Respo
         "Executed atomic batch"
     );
 
+    // Passive checkpoint after write (non-blocking, won't fail the write)
+    if let Err(e) = checkpoint_wal_passive(pool).await {
+        debug!(error = %e, "Passive WAL checkpoint failed (non-critical)");
+    }
+
     Response::ok_exec(rev, total_rows)
 }
 
@@ -368,6 +361,11 @@ async fn execute_separate_batch(stmts: Vec<Statement>, pool: &SqlitePool) -> Res
             return Response::error("Failed to read revision");
         }
     };
+
+    // Passive checkpoint after write (non-blocking, won't fail the write)
+    if let Err(e) = checkpoint_wal_passive(pool).await {
+        debug!(error = %e, "Passive WAL checkpoint failed (non-critical)");
+    }
 
     Response::ok_exec(rev, total_rows)
 }
@@ -446,6 +444,13 @@ async fn bump_revision_in_tx(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>) -> Re
 
 async fn checkpoint_wal(pool: &SqlitePool) -> Result<()> {
     sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn checkpoint_wal_passive(pool: &SqlitePool) -> Result<()> {
+    sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
         .execute(pool)
         .await?;
     Ok(())
